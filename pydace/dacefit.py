@@ -118,7 +118,7 @@ def dacefit(S, Y, regr, corr, theta0, lob=None, upb=None):
         raise ValueError('Multiple design sites are not allowed.')
 
     # regression matrix
-    F = regrpoly(S, polynomial=regr, jacobian='no')  # ignore 'dF'
+    F = regrpoly(S, polynomial=regr)  # ignore 'dF'
     mF, p = F.shape
 
     if mF != m:

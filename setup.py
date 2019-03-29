@@ -12,5 +12,6 @@ setup(name='pydace',
       packages=find_packages(exclude=['tests']),
       long_description=long_description,
       keywords="surrogate, metamodel",
-      install_requires=['numpy', 'scipy']
+      setup_requires=['numpy'],
+      install_requires=['scipy']
       )
