@@ -1,11 +1,9 @@
 import scipy.io as sio
 import numpy as np
-from pydace.dacefit import dacefit
-from pydace.predictor import predictor
+from pydace import dacefit, predictor
 import matplotlib.pyplot as plt
 import time
 import pickle
-
 
 
 mat_contents = sio.loadmat('doe_final_infill.mat')
@@ -40,12 +38,13 @@ end = time.time()
 exectime = end - start
 for var in np.arange(CV.shape[1]):
     plt.figure(var + 1)
-    plt.plot(CVval[:,var], Yhat[:,var], 'b+')
+    plt.plot(CVval[:, var], Yhat[:,var], 'b+')
     plt.xlabel(var_labels[var] + ' - Validation')
     plt.ylabel(var_labels[var] + ' - Kriging')
-    plt.show()
+    # plt.show()
 
 plt.show()
+
 print(f'Dacefit exec time = {exectime} seconds.')
 
 with open('krmodel_test.pickle', 'wb') as handle:
