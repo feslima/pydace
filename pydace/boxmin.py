@@ -1,5 +1,5 @@
 import numpy as np
-import scipy as sp
+from scipy.linalg import cholesky, LinAlgError, qr
 
 from aux_functions.matrixdivide import mldivide, mrdivide
 from pydace import corr
@@ -29,13 +29,13 @@ def objfunc(theta, par):
         (r[idx[0]].reshape(-1, 1), np.ones((m, 1)) + mu))
     try:
         # using scipy's cholesky because numpy's does not produce expected values
-        C = sp.linalg.cholesky(R).T
-    except sp.linalg.LinAlgError:
+        C = cholesky(R).T
+    except LinAlgError:
         return obj, fit  # not positive definite, return inf value
 
     # get least squares solution
     Ft = mldivide(C, par['F'])
-    Q, G = sp.linalg.qr(Ft, mode='economic')
+    Q, G = qr(Ft, mode='economic')
 
     if 1 / np.linalg.cond(G) < 1e-10:
         # check F
