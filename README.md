@@ -14,7 +14,7 @@ For the sake of convenience, Anaconda handles the gritty details of how to combi
 
 To install through PyPi Repository:
 
-    pip install pydacefit
+    pip install pydace
 
 To install via conda
 
