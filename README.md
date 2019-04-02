@@ -4,7 +4,7 @@ This project is an adaptation from the work of Hans Bruun Nielsen, Søren Nymand
 
 ## Notes
 **This is a implementation that relies heavily on linear algebra solvers** (least-squares solvers, Cholesky and QR 
-decompositions, etc.). Therefore is strongly advised that your numpy library be integrated to a 
+decompositions, etc.). Therefore, it is strongly advised that your numpy library be integrated to a 
 [BLAS library](http://markus-beuckelmann.de/blog/boosting-numpy-blas.html) (e.g.: Intel-MKL, OpenBLAS, ATLAS, etc.) 
 in order to attain satisfactory performances of calculation.
 
@@ -14,11 +14,11 @@ For the sake of convenience, Anaconda handles the gritty details of how to combi
 
 To install through PyPi Repository:
 
-    pip install pydacefit
+    pip install pydace
 
 To install via conda
 
-    conda install -c conda-forge pydace
+    conda install -c felipes21 pydace
     
 ## Usage
 
