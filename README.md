@@ -18,7 +18,7 @@ To install through PyPi Repository:
 
 To install via conda
 
-    conda install -c conda-forge pydace
+    conda install -c felipes21 pydace
     
 ## Usage
 
