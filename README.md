@@ -24,8 +24,7 @@ To install via conda
 
 ### Example with dace model
 
-.. code:: python
-    
+```python    
     import numpy as np
     import scipy.io as sio
     from pydace import dacefit, predictor
@@ -75,11 +74,11 @@ Sampling (LHS) that is already implemented in this toolbox.
 
 Lets say we have a 4-th dimensional problem (i.e. 4 design/input variables). They are defined by the following bounds.
 
-|lhsvariables|
+![Variables to sample](pydace/lhsvariables.png)
 
 If we want to build a latin hypercube within these bounds we would do the following:
 
-.. code:: python
+```python
     
     import numpy as np
     from pydace.aux_functions import lhsdesign
