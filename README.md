@@ -33,6 +33,8 @@ To install via conda
     # Load the training and validation data. (Here we are using a file from the github repo located in the folder 
     # pydace\tests with the name 'doe_final_infill_mat'
     
+    mat_contents = sio.loadmat('doe_final_infill.mat')
+    
     design_data = mat_contents['MV']  # design sites
     observed_data = mat_contents['CV']  # experiment results
     
