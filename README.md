@@ -67,6 +67,7 @@ To install via conda
         plt.ylabel(var_labels[var] + ' - Kriging Prediction')
     
     plt.show
+```
 
 ### Example of design of experiment data generation
 It is also possible to generate design of experiment data with a variation reduction technique called Latin Hypercube
@@ -87,7 +88,7 @@ If we want to build a latin hypercube within these bounds we would do the follow
     ub = np.array([20., 100., 400., 400.])
 
     lhs = lhsdesign(53, lb, ub, include_vertices=False)
-
+```
 
 ## Contact/Talk to me
 
