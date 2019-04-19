@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.linalg import cholesky, LinAlgError, qr
 
-from aux_functions.matrixdivide import mldivide, mrdivide
+from pydace.aux_functions.matrixdivide import mldivide, mrdivide
 from pydace import corr
 
 

@@ -3,7 +3,6 @@ import numpy as np
 from pydace import dacefit, predictor
 import matplotlib.pyplot as plt
 import time
-import pickle
 
 
 mat_contents = sio.loadmat('doe_final_infill.mat')
@@ -46,6 +45,3 @@ for var in np.arange(CV.shape[1]):
 plt.show()
 
 print(f'Dacefit exec time = {exectime} seconds.')
-
-with open('krmodel_test.pickle', 'wb') as handle:
-    pickle.dump(krmodel, handle, protocol=pickle.HIGHEST_PROTOCOL)

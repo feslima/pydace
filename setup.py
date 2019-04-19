@@ -4,8 +4,8 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(name='pydace',
-      version='0.0.2',
-      description='Desing and Analysis of Computational Experiments as python toolbox.',
+      version='0.0.4',
+      description='Design and Analysis of Computational Experiments as python toolbox.',
       author='Felipe Souza Lima',
       author_email='felipe.lima@eq.ufcg.edu.br',
       url='https://github.com/feslima/pydace',
@@ -13,8 +13,9 @@ setup(name='pydace',
       packages=find_packages(exclude=['tests']),
       long_description=long_description,
       keywords="surrogate, metamodel",
-      setup_requires=['numpy'],
-      install_requires=['scipy'],
+      setup_requires=['numpy>=1.15'],
+      install_requires=['scipy>=1.2.0', 'pyDOE2'],
+      python_requires='>=3.5',
       classifiers=[
           "Programming Language :: Python :: 3.6",
           "License :: OSI Approved :: Apache Software License",

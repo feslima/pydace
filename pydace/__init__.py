@@ -1,6 +1,6 @@
 import numpy as np
 
-from aux_functions.matrixdivide import mldivide
+from pydace.aux_functions.matrixdivide import mldivide
 from pydace.corr import corr
 from pydace.regr import regrpoly
 from pydace.boxmin import objfunc, boxmin
