@@ -33,7 +33,8 @@ def regrpoly(S, polynomial='poly0', jacobian=False):
 
     """
     if type(jacobian) is not bool:
-        raise ValueError("Invalid jacobian option. Valid values are True and False.")
+        raise ValueError(
+            "Invalid jacobian option. Valid values are True and False.")
 
     m, n = S.shape
 
@@ -52,7 +53,8 @@ def regrpoly(S, polynomial='poly0', jacobian=False):
 
         for k in np.arange(1, n + 1):
             # the k:k+1 in S[:,k:k+1] is to extract the column as a Mx1 matrix
-            f[:, j + np.arange(q)] = np.tile(S[:, (k - 1):k], (1, q)) * S[:, np.arange(k - 1, n)]
+            f[:, j + np.arange(q)] = np.tile(S[:, (k - 1):k],
+                                             (1, q)) * S[:, np.arange(k - 1, n)]
 
             j += q
             q -= 1
@@ -70,13 +72,15 @@ def regrpoly(S, polynomial='poly0', jacobian=False):
 
         elif polynomial == 'poly2':
             nn = int((n + 1) * (n + 2) / 2)
-            df = np.hstack((np.zeros((n, 1)), np.eye(n), np.zeros((n, nn - n - 1))))
+            df = np.hstack((np.zeros((n, 1)), np.eye(n),
+                            np.zeros((n, nn - n - 1))))
             j = n + 1
             q = n
 
             for k in np.arange(1, n + 1):
                 # the k:k+1 in S[:,k:k+1] is to extract the column as a Mx1 matrix
-                df[k - 1, j + np.arange(q)] = np.hstack((2 * S[0, (k - 1):k], S[0, np.arange(k, n)]))
+                df[k - 1, j + np.arange(q)] = np.hstack((2 *
+                                                         S[0, (k - 1):k], S[0, np.arange(k, n)]))
                 # np.arange(k, n) => k + 1:n
 
                 for i in np.arange(1, n - k + 1):

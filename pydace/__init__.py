@@ -1,339 +1,534 @@
 import numpy as np
+from scipy.linalg import LinAlgError, cholesky, qr
+from scipy.optimize import dual_annealing, minimize, shgo
+from scipy.spatial.distance import pdist
 
-from pydace.aux_functions.matrixdivide import mldivide
-from pydace.corr import corr
-from pydace.regr import regrpoly
-from pydace.boxmin import objfunc, boxmin
+from pydace.correlation import corr
+from pydace.regression import regrpoly
+from pydace.utils import lhsdesign
+from pydace.utils.matrixdivide import mldivide, mrdivide
+from pydace.utils.optimizers import BoxMin
 
 
-def dacefit(S, Y, regr, corr, theta0, lob=None, upb=None):
-    """ Constrained non-linear least-squares fit of a given correlation model to the provided data set and regression
-    model.
+class Dace:
+    """This the object oriented implementation of the DACE toolbox MATLAB 
+    implementation.
 
     Parameters
     ----------
-    S : (M, N) ndarray
-        Design sites: an m-by-n array (m being number of samples and n the input dimensions).
-    Y : (M, Q) ndarray
-        Observed responses: m-by-q array (q is the output dimensions).
-        q = 1 means univariate, q > 1 means multivariate
-    regr : {'poly0', 'poly1', 'poly2'}
-        Regression model.
-        Valid model are:
-            Zero order polynomial ('poly0').
-            First order polynomial ('poly1').
-            Second order polynomial ('poly2').
-    corr : {'corrgauss'}
+    regression : str, optional
+        Type of mean regression model. Valid models are:
+
+            * Zero order polynomial ('poly0').
+            * First order polynomial ('poly1').
+            * Second order polynomial ('poly2').
+
+    correlation : str, optional
         Correlation model. Only Gaussian correlation ('corrgauss') implemented.
-    theta0 : (1, N) or (N,1) ndarray
-        Correlation function parameters (:math:`\\theta`). If `lob` and  `upb` are specified, the value of `theta0` is
-        used as initial guess of the optimization problem. Otherwise, the correlation matrix is calculated with the
-        `theta0` given (no optimization).
-    lob : (1, N) or (N,1) ndarray, optional
-        Lower bound of :math:`\\theta`.
-    upb : (1, N) or (N,1) ndarray, optional
-        Upper bound of :math:`\\theta`.
 
-    Returns
-    -------
-    dacemodel : dict
-        DaceModel object containing all the info necessary to be used by the predictor function.
-    perf : dict
-        PerformanceInfo dictionary containing information about the optimzation.
+    optimizer : str, optional
+        Type of NLP optimizer used to find the hyperparameters `theta`. Valid 
+        optimizers are  'boxmin' and 'shgo'. Default is 'boxmin' (original 
+        implementation).  Even though the SHGO is a global optimization solver,
+        it is costly to use it due the amount of maximum likelihood function 
+        evaluations.
 
-    Raises
-    ------
-    ValueError
-        When `S` and `Y` does not have the same number of rows.
-        When specifying only one of either `lob` and `upb`.
-        When `lob`, `upb` and `theta0` does not have the same lengths.
-        When `theta0` is outside the bound `lob`<`theta`<=`upb`.
-        When `theta0` <= 0.
-        When `S` has any repeated rows.
-    ArithmeticError
-        When the optimization fails.
-    LinAlgError
-        When the design sites are too close to one another resulting in ill-conditioning of the correlation matrix.
+    optimizer_options : dict, optional
+        NLP optimizer extra option parameters. Only for the 'shgo' optimizer.
+        Valid fields are:
+
+        * sampling_method : str
+            Current built in sampling method options are `sobol` and
+            `simplicial`. The default `simplicial` uses less memory and 
+            provides the theoretical guarantee of convergence to the global 
+            minimum in finite time. The `sobol` method is faster in terms of 
+            sampling point generation at the cost of higher memory resources 
+            and the loss of guaranteed convergence. It is more appropriate for 
+            most "easier" problems where the convergence is relatively fast.
+
+        * n_points : int
+            Number of sampling points used in the construction of the 
+            simplicial complex. Note that this argument is only used for 
+            `sobol`.
     """
-    if Y.ndim == 1:  # if observed data is a column vector, make sure it is a matrix (ndim = 2)
-        Y = Y.reshape(-1, 1)
 
-    # check design points
-    m, n = S.shape  # number of design sites and their dimension
-    sY = Y.shape
+    def __init__(self, regression: str, correlation: str,
+                 optimizer: str = 'boxmin', optimizer_options: dict = None):
+        self._S = None
+        self._Y = None
+        self._regression = regression
+        self._correlation = correlation
+        self._optimizer = optimizer
 
-    if np.min(sY, axis=0) == 1:
-        Y = Y.reshape(-1, 1)
-        lY = np.max(sY, axis=0)
-        sY = Y.shape
-    else:
-        lY = sY[0]
+        self._sampling_method = 'simplicial'
+        self._n_points = 100
+        if optimizer_options is not None:
+            if 'sampling_method' in optimizer_options:
+                self._sampling_method = optimizer_options['sampling_method']
 
-    if m != lY:
-        raise ValueError('S and Y must have the same number of rows.')
+            if 'n_points' in optimizer_options:
+                self._n_points = optimizer_options['n_points']
 
-    # check correlation parameters
-    lth = theta0.size
+    # ------------------------------ PROPERTIES -------------------------------
+    @property
+    def S(self) -> np.ndarray:
+        """m-by-n array of design sites (m being the number of samples and n
+        the number of input dimensions."""
+        return self._S
 
-    if (lob is None and upb is not None) or (lob is not None and upb is None):
-        raise ValueError('You must specify both theta bounds.')
+    @S.setter
+    def S(self, value: np.ndarray):
+        # normalize the data
+        mS = np.mean(value, axis=0)
+        sS = np.std(value, axis=0, ddof=1)
 
-    if lob is not None and upb is not None:  # optimization case
+        sS[sS == 0] = 1.0
 
-        if lob.size != lth or upb.size != lth:
-            raise ValueError('theta0, lob and upb must have the same length.')
+        self._S = (value - mS) / sS
 
-        any_lob_le_zero = np.any(np.less_equal(lob, np.zeros(lob.shape)))
-        any_upb_lt_lob = np.any(np.less(upb, lob))
-        if any_lob_le_zero or any_upb_lt_lob:
-            raise ValueError('The bounds must satisfy 0 < lob <= upb.')
+        self.m, self.n = self._S.shape
+        self._Ssc = np.vstack((mS, sS))
 
-    else:  # given theta
-        if np.any(np.less_equal(theta0, np.zeros(theta0.shape))):
-            raise ValueError('theta0 must be strictly positive.')
+    @property
+    def Y(self) -> np.ndarray:
+        """m-by-q array of observed responses (q is the output dimensions).
+        q = 1 mean univariate model, otherise the model is considered
+        multivariate."""
+        return self._Y
 
-    # normalize the data
-    mS = np.mean(S, axis=0)
-    sS = np.std(S, axis=0, ddof=1)  # setting the delta degrees of fredom to 1 (matlab default)
+    @Y.setter
+    def Y(self, value: np.ndarray):
+        if value.shape[0] == 1 or value.ndim == 1:
+            # if the Y array is row vector or 1D array make it a column vector
+            value = value.reshape(-1, 1)
 
-    mY = np.mean(Y, axis=0)
-    sY = np.std(Y, axis=0, ddof=1)
+        m, _ = value.shape
 
-    sS[sS == 0] = 1
-    sY[sY == 0] = 1
+        if m != self.S.shape[0]:
+            raise ValueError('S and Y must have the same number of rows')
 
-    S = (S - mS) / sS
-    Y = (Y - mY) / sY
+        # normalize the data
+        mY = np.mean(value, axis=0)
+        sY = np.std(value, axis=0, ddof=1)
 
-    # calculate distances D between points
-    mzmax = int(m * (m - 1) / 2)  # number of non-zero distances
-    ij = np.zeros((mzmax, 2), dtype=np.int)  # initialize matrix with indices
-    D = np.zeros((mzmax, n))  # initialize matrix with distances
-    ll = np.zeros(m - 1, dtype=np.int)
+        sY[sY == 0] = 1.0
 
-    for k in np.arange(1, m):
-        ll = ll[-1] + np.arange(1, m - k + 1, dtype=np.int)
-        ij[ll - 1, :] = np.hstack((np.tile(k - 1, (m - k, 1)), np.arange(k + 1, m + 1).reshape(-1, 1) - 1))
-        D[ll - 1, :] = np.tile(S[k - 1, :], (m - k, 1)) - S[np.arange(k, m), :]
+        self._Y = (value - mY) / sY
+        self._Ysc = np.vstack((mY, sY))
 
-    if np.min(np.sum(np.abs(D), axis=1), axis=0) == 0:
-        raise ValueError('Multiple design sites are not allowed.')
+    # ---------------------------- PRIVATE METHODS ----------------------------
+    def _initialize(self) -> dict:
+        """Initialize the parameters for the objective function.
+        """
+        if self.S is None or self.Y is None:
+            raise AttributeError("S and/or Y arrays not defined.")
 
-    # regression matrix
-    F = regrpoly(S, polynomial=regr)  # ignore 'dF'
-    mF, p = F.shape
+        S = self.S
+        Y = self.Y
+        sS = np.std(S, axis=0, ddof=1)
+        sS[sS == 0] = 1.0
 
-    if mF != m:
-        raise ValueError('Number of rows in F and S do not match.')
+        m, n = S.shape
 
-    if p > mF:
-        raise ArithmeticError('Least-squares problem is undetermined.')
+        # calculate distances D between points
+        mzmax = int(m * (m - 1) / 2)  # number of non-zero distances
+        D = np.zeros((mzmax, n))  # initialize matrix with distances
 
-    # parameters for objective function
-    # par = ObjPar(corr, regr, Y, F, D, ij, sS)
-    par = {'corr': corr,
-           'regr': regr,
-           'Y': Y,
-           'F': F,
-           'D': D,
-           'ij': ij,
-           'sS': sS}
+        # create indexes for distances between points
+        for k in range(n):
+            D[:, k] = pdist(S[:, [k]], metric='euclidean')
 
-    if lob is not None and upb is not None:
-        theta, f, fit, perf = boxmin(theta0, lob, upb, par)
+        if np.min(np.sum(np.abs(D), axis=1), axis=0) == 0:
+            raise ValueError('Multiple design sites are not allowed.')
 
-        if np.isinf(f):
-            raise ValueError('Bad parameter region. Try increasing upb.')
+        # regression matrix
+        F = regrpoly(S, polynomial=self._regression)  # ignore 'dF'
+        mF, p = F.shape
 
-    elif lob is None and upb is None:
-        # Given theta
-        theta = theta0.reshape(-1, 1)
-        f, fit = objfunc(theta, par)
-        perf = {'nv': 1,
-                'perf': np.vstack((theta, f, 1))}
+        if mF != m:
+            raise ValueError('Number of rows in F and S do not match.')
 
-        if np.isinf(f):
-            raise ValueError('Poor theta value. ')
+        if p > mF:
+            raise ArithmeticError('Least-squares problem is undetermined.')
 
-    # return values
-    # return DaceModel(regr, corr, theta, sY, fit, S,
-    #                  np.vstack((mS, sS)), np.vstack((mY, sY))), perf
-    return {'regr': regr,
-            'corr': corr,
-            'theta': theta.T,
-            'beta': fit['beta'],
-            'gamma': fit['gamma'],
-            'sigma2': sY ** 2 * fit['sigma2'],
-            'S': S,
-            'Ssc': np.vstack((mS, sS)),
-            'Ysc': np.vstack((mY, sY)),
-            'C': fit['C'],
-            'Ft': fit['Ft'],
-            'G': fit['G']}, perf
+        par = {'corr': self._correlation,
+               'regr': self._regression,
+               'Y': Y,
+               'F': F,
+               'D': D,
+               'sS': sS}
 
+        self._par = par
 
-def predictor(x, dmodel, compute_jacobian=False, compute_mse=False, compute_mse_jacobian=False):
-    """
-    Predictor for y(x) using the given DACE model. (Optimized version to enable fast calculations)
+    def _objfunc(self, theta: np.ndarray):
+        """Maximum likelihood evaluation
 
-    Parameters
-    ----------
-    x : (M, N) ndarray
-        Trial design sites with n dimensions.
-    dmodel : dict
-        DACE model struct.
-    compute_jacobian : bool, optional
-        Whether or not to compute the jacobian.
-    compute_mse : bool, optional
-        Whether or not to compute the Mean Squared Error (MSE) of the prediction
-    compute_mse_jacobian : bool, optional
-        Whether or not to compute the MSE jacobian of the prediction.
+        Parameters
+        ----------
+        theta : np.ndarray
+            [description]
+        """
+        # initialize
+        obj = np.Inf
 
-    Returns
-    -------
-    y : (M,1) ndarray
-        Predicted response at x.
-    or1 : (M, ...) ndarray
-        If m = 1, and `cjac` is set to 'yes', then `or1` is a gradient vector/Jacobian matrix of predictor. Otherwise,
-        `or1` is a vector with m rows containing the estimated mean squared error of the predictor.
-    or2 : float
-        If m = 1, and `cmse` is set to 'yes', then `or2` is a the estimated mean squared error (MSE) of the predictor.
-        Otherwise (m > 1 or `cmse' set to 'no'), it's a NaN type.
-    dmse : (M, ...) ndarray
-        The gradient vector/Jacobian Matrix of the MSE. Only available when m = 1 and `cmsejac` set to 'yes', otherwise
-        it's a NaN type.
+        fitpar = {'sigma2': np.NaN,
+                  'beta': np.NaN,
+                  'gamma': np.NaN,
+                  'C': np.NaN,
+                  'Ft': np.NaN,
+                  'G': np.NaN, }
 
-    """
-    if x.ndim == 1:  # change from 1d array to 2d
-        x = x[np.newaxis, :]
+        m = self._par['F'].shape[0]
 
-    if x.ndim > 2:
-        raise ValueError("Input arrays of dimension higher than 2 aren't allowed.")
+        # set up R
+        r = corr(theta, self._par['D'], correlation=self._par['corr'])
 
-    if np.all(np.isnan(dmodel['beta'])):
-        raise ValueError("Kriging build is invalid because it contains NaN values.")
+        mu = (10 + m) * np.spacing(1)
+        R = np.triu(np.ones((m, m)), 1)
+        R[R == 1.0] = r
+        np.fill_diagonal(R, 1.0 + mu)
 
-    m, n = dmodel['S'].shape  # number of design sites and number of dimension
-    sx = x.shape  # number of trial sites and their dimension
+        try:
+            C = cholesky(R).T
+        except LinAlgError:
+            # cholesky decomp failed, not positive definite, return inf
+            self._fitpar = fitpar
+            return obj
 
-    if np.min(sx) == 1 and n > 1:  # single trial point
-        nx = np.max(sx)
+        # get least squares solution
+        Ft = mldivide(C, self._par['F'])
+        Q, G = qr(Ft, mode='economic')
 
-        if nx == n:
-            mx = 1
-            x = x.reshape(1, -1)  # row vector reshaping ´x(:).'´
+        if 1 / np.linalg.cond(G) < 1e-10:
+            # check F
+            if np.linalg.cond(self._par['F']) > 1e15:
+                raise ValueError(
+                    ("F is too ill conditioned. Poor combination of "
+                     "regression model and design sites."))
+            else:  # matrix Ft is too ill conditioned
+                self._fitpar = fitpar
+                return obj
 
-    else:
-        mx, nx = sx
+        Yt = mldivide(C, self._par['Y'])
+        beta = mldivide(G, Q.T @ Yt)
+        rho = Yt - Ft @ beta
+        sigma2 = np.sum(rho ** 2, axis=0) / m
+        detR = np.prod(np.diag(C) ** (2 / m), axis=0)
+        obj = np.sum(sigma2, axis=0) * detR
 
-    if nx != n:
-        raise ValueError(f"Dimension of trial sites must be {n}.")
+        fitpar['sigma2'] = sigma2 * self._Ysc[1, :] ** 2
+        fitpar['beta'] = beta
+        fitpar['gamma'] = mrdivide(rho.T, C)
+        fitpar['C'] = C
+        fitpar['Ft'] = Ft
+        fitpar['G'] = G.T
 
-    # assign data
-    dy, mse, dmse = np.NaN, np.NaN, np.NaN
+        self._fitpar = fitpar
+        return obj
 
-    # normalize trial sites
-    x = (x - dmodel['Ssc'][[0], :]) / dmodel['Ssc'][[1], :]
-    q = dmodel['Ysc'].shape[1]  # number of response functions
+    # ---------------------------- PUBLIC METHODS -----------------------------
+    def fit(self, S: np.ndarray, Y: np.ndarray, theta0: np.ndarray,
+            lob: np.ndarray = None, upb: np.ndarray = None):
+        """ Constrained non-linear least-squares fit of a given correlation 
+        model to the provided data set and regression model.
 
-    if mx == 1:  # one site only
-        dx = x - dmodel['S']  # distance to design sites
+        Parameters
+        ----------
+        S : (M, N) ndarray
+            Design sites: an m-by-n array (m being number of samples and n the
+            input dimensions).
 
-        # get correlation a regression data depending whether or not jacobian info was required
-        if compute_jacobian or compute_mse_jacobian:  # jacobian required
-            f, df = regrpoly(x, polynomial=dmodel['regr'], jacobian=True)
-            r, dr = corr(dmodel['theta'], dx, correlation=dmodel['corr'], jacobian=True)
+        Y : (M, Q) ndarray
+            Observed responses: m-by-q array (q is the output dimensions).
+            q = 1 means univariate, q > 1 means multivariate.
+
+        theta0 : (N,) ndarray
+            Correlation function parameters (`theta`). If `lob` and  `upb` are 
+            specified, the value of `theta0` is used as initial guess of the 
+            optimization problem. Otherwise, the correlation matrix is 
+            calculated with the `theta0` given (no optimization).
+
+        lob : (N,) ndarray, optional
+            Lower bound of `theta`.
+
+        upb : (N,) ndarray, optional
+            Upper bound of `theta`.
+
+        Raises
+        ------
+        ValueError
+            When `S` and `Y` does not have the same number of rows.
+
+            When specifying only one of either `lob` and `upb`.
+
+            When `lob`, `upb` and `theta0` does not have the same lengths.
+
+            When `theta0` is outside the bound `lob`<`theta`<=`upb`.
+
+            When `theta0` <= 0.
+
+            When `S` has any repeated rows.
+
+        ArithmeticError
+            When the optimization fails.
+
+        LinAlgError
+            When the design sites are too close to one another resulting in 
+            ill-conditioning of the correlation matrix.
+
+        """
+
+        self.S = S
+        self.Y = Y
+
+        if theta0.ndim != 1:
+            theta0 = theta0.flatten()
+
+        if (lob is None and upb is not None) or \
+                (lob is not None and upb is None):
+            raise ValueError('You must specify both theta bounds.')
+
+        # load objfunc parameters
+        self._initialize()
+
+        if lob is not None and upb is not None:
+            # optimization
+            if lob.ndim != 1 or upb.ndim != 1:
+                lob = lob.flatten()
+                upb = upb.flatten()
+
+            lth = theta0.size
+
+            if lob.size != lth or upb.size != lth:
+                raise ValueError(
+                    'theta0, lob and upb must have the same length.')
+
+            any_lob_le_zero = np.any(np.less_equal(lob, np.zeros(lob.shape)))
+            any_upb_lt_lob = np.any(np.less(upb, lob))
+            if any_lob_le_zero or any_upb_lt_lob:
+                raise ValueError('The bounds must satisfy 0 < lob <= upb.')
+
+            if self._optimizer == 'boxmin':
+                # optimize using boxmin
+                bmin = BoxMin(self, theta0, lob, upb)
+
+                if np.isinf(bmin.f):
+                    raise ValueError(
+                        'Bad parameter region. Try increasing upb.')
+
+                f = bmin.f
+                theta = bmin.t
+                self._objfunc(theta)
+                perf = bmin.perf_info
+                self.theta = theta
+
+            elif self._optimizer == 'shgo':
+                t_bounds = list(zip(lob, upb))
+
+                def samp_method(n, dim):
+                    return lhsdesign(n, lob, upb)
+
+                result = shgo(self._objfunc, t_bounds,
+                              sampling_method=self._sampling_method,
+                              n=self._n_points,
+                              minimizer_kwargs={'method': 'slsqp'},
+                              options={'minimize_every_iter': False})
+
+                theta = result['x']
+                f = self._objfunc(theta)
+                self.theta = theta
+                if not result['success']:
+                    raise ValueError("Optimizer failed to converge")
+        else:  # given theta
+            if np.any(np.less_equal(theta0, np.zeros(theta0.shape))):
+                raise ValueError('theta0 must be strictly positive.')
+
+            f = self._objfunc(theta0)
+            self.theta = theta0
+
+    def predict(self, X: np.ndarray, compute_jacobian=False, compute_mse=False,
+                compute_mse_jacobian=False):
+        """
+        Predictor for y(x) using the given DACE model.
+
+        Parameters
+        ----------
+        x : (M, N) ndarray
+            Trial design sites with n dimensions.
+
+        compute_jacobian : bool, optional
+            Whether or not to compute the jacobian.
+
+        compute_mse : bool, optional
+            Whether or not to compute the Mean Squared Error (MSE) of the 
+            prediction
+
+        compute_mse_jacobian : bool, optional
+            Whether or not to compute the MSE jacobian of the prediction.
+
+        Returns
+        -------
+        y : (M,1) ndarray
+            Predicted response at x.
+
+        or1 : (M, ...) ndarray
+            If m = 1, and `compute_jacobian` is set to True, then `or1` is a 
+            gradient vector/Jacobian matrix of predictor. Otherwise, `or1` is a 
+            vector with m rows containing the estimated mean squared error of 
+            the predictor.
+
+        or2 : float
+            If m = 1, and `compute_mse` is set to True, then `or2` is a the 
+            estimated mean squared error (MSE) of the predictor. Otherwise 
+            (m > 1 or `compute_mse' set to False), it's a NaN type.
+
+        dmse : (M, ...) ndarray
+            The gradient vector/Jacobian Matrix of the MSE. Only available when
+            m = 1 and `compute_mse_jacobian` set to True, otherwise it's a NaN 
+            type.
+
+        """
+        x = X  # to avoid confusion with internal X (train X)
+
+        if x.ndim == 1:  # change from 1d array to 2d
+            x = x[np.newaxis, :]
+
+        if x.ndim > 2:
+            raise ValueError(
+                "Input arrays of dimension higher than 2 aren't allowed.")
+
+        if np.all(np.isnan(self._fitpar['beta'])):
+            raise ValueError(
+                "Kriging build is invalid because it contains NaN values.")
+
+        m, n = self.m, self.n
+        sx = x.shape  # number of trial sites and their dimension
+
+        if np.min(sx) == 1 and n > 1:  # single trial point
+            nx = np.max(sx)
+
+            if nx == n:
+                mx = 1
+                x = x.reshape(1, -1)  # row vector reshaping ´x(:).'´
 
         else:
-            f = regrpoly(x, polynomial=dmodel['regr'])
-            r = corr(dmodel['theta'], dx, correlation=dmodel['corr'])
+            mx, nx = sx
 
-        # compute the prediction
-        # Scaled predictor
-        sy = f @ dmodel['beta'] + (dmodel['gamma'] @ r).T
+        if nx != n:
+            raise ValueError(f"Dimension of trial sites must be {n}.")
 
-        # Predictor
-        if q == 1:  # make sure the return is a scalar
-            y = np.asscalar((dmodel['Ysc'][[0], :] + dmodel['Ysc'][[1], :] * sy).conj().T)
-        else:  # otherwise, keep it as it is
-            y = (dmodel['Ysc'][[0], :] + dmodel['Ysc'][[1], :] * sy).conj().T
+        # assign data
+        dy, mse, dmse = np.NaN, np.NaN, np.NaN
 
-        # compute the prediction jacobian
-        if compute_jacobian:
-            # scaled jacobian
-            sdy = np.transpose(df @ dmodel['beta']) + dmodel['gamma'] @ dr
+        # normalize trial sites
+        x = (x - self._Ssc[[0], :]) / self._Ssc[[1], :]
+        q = self._Ysc.shape[1]  # number of response functions
 
-            # unscaled jacobian
-            dy = sdy * dmodel['Ysc'][[1], :].T / dmodel['Ssc'][[1], :]
+        if mx == 1:  # one site only
+            dx = x - self.S  # distance to design sites
 
-            if q == 1:  # gradient as column vector for single dimension
-                dy = dy.conj().T
+            # get correlation a regression data depending whether or not
+            # jacobian info was required
+            if compute_jacobian or compute_mse_jacobian:  # jacobian required
+                f, df = regrpoly(x, polynomial=self._regression, jacobian=True)
+                r, dr = corr(self.theta, dx, correlation=self._correlation,
+                             jacobian=True)
+            else:
+                f = regrpoly(x, polynomial=self._regression)
+                r = corr(self.theta, dx, correlation=self._correlation)
 
-        # compute MSE
-        if compute_mse:
-            # MSE
-            rt = mldivide(dmodel['C'], r)
-            u = dmodel['Ft'].T @ rt - f.T
-            v = mldivide(dmodel['G'], u)
-            mse = np.tile(dmodel['sigma2'], (mx, 1)) * np.tile(
-                (1 + np.sum(v ** 2, axis=0) - np.sum(rt ** 2, axis=0)).conj().T,
-                (1, q))
+            # compute the prediction
+            # Scaled predictor
+            sy = f @ self._fitpar['beta'] + (self._fitpar['gamma'] @ r).T
 
-            if q == 1:  # make sure the return is a scalar if q == 1
-                mse = np.asscalar(mse)
+            # Predictor
+            if q == 1:  # make sure the return is a scalar
+                y = np.asscalar((self._Ysc[[0], :] + self._Ysc[[1], :] * sy).T)
+            else:  # otherwise, keep it as it is
+                y = (self._Ysc[[0], :] + self._Ysc[[1], :] * sy).T
 
-            # compute MSE jacobian
-            if compute_mse:
-                # scaled gradient as row vector
-                Gv = mldivide(dmodel['G'].conj().T, v)
-                g = (dmodel['Ft'] @ Gv - rt).conj().T @ mldivide(dmodel['C'], dr) - (df @ Gv).conj().T
+            # compute the prediction jacobian
+            if compute_jacobian:
+                # scaled jacobian
+                sdy = np.transpose(df @ self._fitpar['beta']) + \
+                    self._fitpar['gamma'] @ dr
 
-                # unscaled MSE jacobian
-                dmse = np.tile(2 * dmodel['sigma2'].reshape(1, -1).conj().T, (1, nx)) * np.tile(
-                    g / dmodel['Ssc'][[1], :], (q, 1))
+                # unscaled jacobian
+                dy = sdy * self._Ysc[[1], :].T / self._Ssc[[1], :]
 
                 if q == 1:  # gradient as column vector for single dimension
-                    dmse = dmse.conj().T
+                    dy = dy.T
 
-    else:  # several trial sites
+            # compute MSE
+            if compute_mse:
+                # MSE
+                rt = mldivide(self._fitpar['C'], r)
+                u = self._fitpar['Ft'].T @ rt - f.T
+                v = mldivide(self._fitpar['G'], u)
+                mse = np.tile(self._fitpar['sigma2'], (mx, 1)) * \
+                    np.tile((1 + np.sum(v ** 2, axis=0) -
+                             np.sum(rt ** 2, axis=0)).T,
+                            (1, q))
 
-        if compute_jacobian or compute_mse_jacobian:  # basic sanitation
-            raise ValueError("Can't compute either prediction or MSE jacobian for several design sites.")
+                if q == 1:  # make sure the return is a scalar if q == 1
+                    mse = np.asscalar(mse)
 
-        # Get distance to design sites
-        dx = np.zeros((mx * m, n))
-        kk = np.arange(m).reshape(1, -1)
+                # compute MSE jacobian
+                if compute_mse:
+                    # scaled gradient as row vector
+                    Gv = mldivide(self._fitpar['G'].T, v)
+                    g = (self._fitpar['Ft'] @ Gv - rt).T @ \
+                        mldivide(self._fitpar['C'], dr) - (df @ Gv).T
 
-        for k in np.arange(mx):
-            dx[kk, :] = x[k, :] - dmodel['S']
-            kk = kk + m
+                    # unscaled MSE jacobian
+                    dmse = np.tile(2 * self._fitpar['sigma2'].reshape(1, -1).T,
+                                   (1, nx)) * \
+                        np.tile(g / self._Ssc[[1], :], (q, 1))
 
-        # Get regression function or correlation
-        f = regrpoly(x, polynomial=dmodel['regr'])
-        r = np.reshape(corr(dmodel['theta'], dx, correlation=dmodel['corr']), (m, mx), order='F')
+                    if q == 1:  # gradient as column vector for single dimension
+                        dmse = dmse.conj().T
 
-        # scaled predictor
-        sy = f @ dmodel['beta'] + (dmodel['gamma'] @ r).T
+        else:  # several trial sites
 
-        # predictor
-        # org -- y = np.tile(dmodel['Ysc'][[0], :], (mx, 1)) + np.tile(dmodel['Ysc'][[1], :], (mx, 1)) * sy
-        y = dmodel['Ysc'][[0], :] + dmodel['Ysc'][[1], :] * sy
+            if compute_jacobian or compute_mse_jacobian:  # basic sanitation
+                raise ValueError(("Can't compute either prediction or MSE "
+                                  "jacobian for several design sites."))
 
-        # MSE
-        rt = mldivide(dmodel['C'], r)
-        u = mldivide(dmodel['G'], dmodel['Ft'].T @ rt - f.T)
-        # org --
-        # mse = np.tile(dmodel['sigma2'], (mx, 1)) * np.tile((1 + colsum(u ** 2) - colsum(rt ** 2)).conj().T,(1, q))
-        mse = dmodel['sigma2'] * (1 + _colsum(u ** 2) - _colsum(rt ** 2)).conj().T
+            # Get distance to design sites
+            dx = np.zeros((mx * m, n))
+            kk = np.arange(m).reshape(1, -1)
 
-    return y, dy, mse, dmse
+            for k in np.arange(mx):
+                dx[kk, :] = x[k, :] - self.S
+                kk = kk + m
 
+            # Get regression function or correlation
+            f = regrpoly(x, polynomial=self._regression)
+            r = np.reshape(corr(self.theta, dx, correlation=self._correlation),
+                           (m, mx), order='F')
 
-def _colsum(x):
-    """Columnwise sum of elements in x."""
+            # scaled predictor
+            sy = f @ self._fitpar['beta'] + (self._fitpar['gamma'] @ r).T
 
-    if x.shape[0] == 1:
-        return x
+            # predictor
+            y = self._Ysc[[0], :] + self._Ysc[[1], :] * sy
 
-    else:
-        return np.sum(x, axis=0)
+            # MSE
+            if compute_mse:
+                rt = mldivide(self._fitpar['C'], r)
+                u = mldivide(self._fitpar['G'],
+                             self._fitpar['Ft'].T @ rt - f.T)
+
+                mse = self._fitpar['sigma2'] * \
+                    (1 + self._colsum(u ** 2) - self._colsum(rt ** 2)).T
+
+        return y, dy, mse, dmse
+
+    def _colsum(self, x):
+        """Columnwise sum of elements in x."""
+
+        if x.shape[0] == 1:
+            return x
+
+        else:
+            return np.sum(x, axis=0)

@@ -40,7 +40,8 @@ def corr(theta, d, correlation='corrgauss', jacobian=False):
     """
     # TODO: implement other correlation models
     if type(jacobian) is not bool:
-        raise ValueError("Invalid jacobian option. Valid values are True and False.")
+        raise ValueError(
+            "Invalid jacobian option. Valid values are True and False.")
 
     m, n = d.shape  # number of differences and dimension of data
 
@@ -52,11 +53,12 @@ def corr(theta, d, correlation='corrgauss', jacobian=False):
 
         # original -- td = d ** 2 * np.tile(-theta.reshape(-1, 1).T, (m, 1))
         td = d * -theta.flatten()
-        r = np.exp(np.sum(d * td, axis=1, keepdims=True))  # keepdims=True is to force r to be a matrix column
+        # keepdims=True is to force r to be a matrix column
+        r = np.exp(np.sum(d * td, axis=1, keepdims=False))
 
         if jacobian:
             # original -- dr = np.tile(-2 * theta.reshape(-1, 1).T, (m, 1)) * d * np.tile(r, (1, n))
-            dr = 2 * td * r
+            dr = 2 * td * r[:, np.newaxis]
 
     else:
         raise NotImplementedError('Correlation not implemented or invalid.')

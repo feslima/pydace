@@ -27,11 +27,12 @@ To install via conda
 ```python    
     import numpy as np
     import scipy.io as sio
-    from pydace import dacefit, predictor
+    from pydace import Dace
     import matplotlib.pyplot as plt
     
-    # Load the training and validation data. (Here we are using a file from the github repo located in the folder 
-    # pydace\tests with the name 'doe_final_infill_mat'
+    # Load the training and validation data. (Here we are using a file from the
+    # github repo located in the folder pydace\tests with the name 
+    # 'doe_final_infill_mat'
     
     mat_contents = sio.loadmat('doe_final_infill.mat')
     
@@ -39,9 +40,9 @@ To install via conda
     observed_data = mat_contents['CV']  # experiment results
     
     # define the hyperparameters bounds and initial estimate
-    theta0 = 10 * np.ones((1, 2))
-    lob = 1e-3 * np.ones(theta0.shape)
-    upb = 100 * np.ones(theta0.shape)
+    theta0 = 1 * np.ones((design_data.shape[1],))
+    lob = 1e-5 * np.ones(theta0.shape)
+    upb = 1e5 * np.ones(theta0.shape)
     
     # select the training and validation data
     design_val = design_data[:99, :]
@@ -50,25 +51,30 @@ To install via conda
     design_train = design_data[100:, :]
     observed_train = observed_data[100:, :]
     
-    # build the univariate kriging models with a first order polynomial regression and a gaussian regression model
+    # build the univariate kriging models with a first order polynomial 
+    # regression and a gaussian regression model
     observed_prediction = np.empty(observed_val.shape)
     for j in np.arange(design_data.shape[1]):
-        krmodelPH, perfPH = dacefit(design_train, observed_train[:, j], 'poly1', 'corrgauss', theta0, lob, upb)
-        krmodel.append(krmodelPH)
-        perf.append(perfPH)
-        
-        # cross validate the data
-        observed_prediction[:, [j]] = predictor(design_val, krmodelPH)[0]
+        # initialize the dace object
+        dace_obj = Dace('poly1', 'corrgauss', optimizer='boxmin')
+
+        # fit the training data using the default hyperparameter optimizer
+        dace_obj.fit(design_train, observed_train[:, j], theta0, lob, upb)
+
+        # predict the validation data
+        observed_prediction[:, [j]], *_ = dace_obj.predict(design_val)
     
-    # plot the cross validation data
-    var_labels = ['L/F', 'V/F', 'xD', 'xB', 'J', 'QR']  # labels for the observed data
+    # labels for the observed data
+    var_labels = ['L/F', 'V/F', 'xD', 'xB', 'J', 'QR'] 
+    
+    # plot the validation data
     for var in np.arange(design_data.shape[1]):
         plt.figure(var + 1)
         plt.plot(observed_val[:, var], observed_prediction[:,var], 'b+')
         plt.xlabel(var_labels[var] + ' - Observed')
         plt.ylabel(var_labels[var] + ' - Kriging Prediction')
     
-    plt.show
+    plt.show()
 ```
 
 ### Example of design of experiment data generation
