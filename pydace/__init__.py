@@ -1,6 +1,5 @@
 import numpy as np
 from scipy.linalg import LinAlgError, cholesky, qr
-from scipy.optimize import dual_annealing, minimize, shgo
 from scipy.spatial.distance import pdist
 
 from pydace.correlation import corr
@@ -28,32 +27,12 @@ class Dace:
 
     optimizer : str, optional
         Type of NLP optimizer used to find the hyperparameters `theta`. Valid 
-        optimizers are  'boxmin' and 'shgo'. Default is 'boxmin' (original 
-        implementation).  Even though the SHGO is a global optimization solver,
-        it is costly to use it due the amount of maximum likelihood function 
-        evaluations.
-
-    optimizer_options : dict, optional
-        NLP optimizer extra option parameters. Only for the 'shgo' optimizer.
-        Valid fields are:
-
-        * sampling_method : str
-            Current built in sampling method options are `sobol` and
-            `simplicial`. The default `simplicial` uses less memory and 
-            provides the theoretical guarantee of convergence to the global 
-            minimum in finite time. The `sobol` method is faster in terms of 
-            sampling point generation at the cost of higher memory resources 
-            and the loss of guaranteed convergence. It is more appropriate for 
-            most "easier" problems where the convergence is relatively fast.
-
-        * n_points : int
-            Number of sampling points used in the construction of the 
-            simplicial complex. Note that this argument is only used for 
-            `sobol`.
+        optimizers are  'boxmin'. Default is 'boxmin' (original 
+        implementation).
     """
 
     def __init__(self, regression: str, correlation: str,
-                 optimizer: str = 'boxmin', optimizer_options: dict = None):
+                 optimizer: str = 'boxmin'):
         self._S = None
         self._Y = None
         self._regression = regression
@@ -62,12 +41,6 @@ class Dace:
 
         self._sampling_method = 'simplicial'
         self._n_points = 100
-        if optimizer_options is not None:
-            if 'sampling_method' in optimizer_options:
-                self._sampling_method = optimizer_options['sampling_method']
-
-            if 'n_points' in optimizer_options:
-                self._n_points = optimizer_options['n_points']
 
     # ------------------------------ PROPERTIES -------------------------------
     @property
@@ -322,23 +295,8 @@ class Dace:
                 perf = bmin.perf_info
                 self.theta = theta
 
-            elif self._optimizer == 'shgo':
-                t_bounds = list(zip(lob, upb))
-
-                def samp_method(n, dim):
-                    return lhsdesign(n, lob, upb)
-
-                result = shgo(self._objfunc, t_bounds,
-                              sampling_method=self._sampling_method,
-                              n=self._n_points,
-                              minimizer_kwargs={'method': 'slsqp'},
-                              options={'minimize_every_iter': False})
-
-                theta = result['x']
-                f = self._objfunc(theta)
-                self.theta = theta
-                if not result['success']:
-                    raise ValueError("Optimizer failed to converge")
+            else:
+                raise NotImplementedError("Invalid optimizer option or not implemented.")
         else:  # given theta
             if np.any(np.less_equal(theta0, np.zeros(theta0.shape))):
                 raise ValueError('theta0 must be strictly positive.')
