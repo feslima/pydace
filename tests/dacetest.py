@@ -1,11 +1,14 @@
 import scipy.io as sio
 import numpy as np
-from pydace import dacefit, predictor
+from pydace import Dace
 import matplotlib.pyplot as plt
 import time
 
+import pathlib
 
-mat_contents = sio.loadmat('doe_final_infill.mat')
+filepath = str(pathlib.Path(__file__).resolve().parent /
+               'doe_final_infill.mat')
+mat_contents = sio.loadmat(filepath)
 
 CV = mat_contents['CV']
 MV = mat_contents['MV']
@@ -28,10 +31,13 @@ krmodel = []
 perf = []
 Yhat = np.empty(CVval.shape)
 for i in np.arange(CV.shape[1]):
-    krmodelPH, perfPH = dacefit(MVB, CVB[:, i], 'poly1', 'corrgauss', theta0, lob, upb)
+    krmodelPH = Dace(regression='poly1', correlation='corrgauss')
+    krmodelPH.fit(S=MVB, Y=CVB[:, i], theta0=theta0, lob=lob, upb=upb)
+    
     krmodel.append(krmodelPH)
-    perf.append(perfPH)
-    Yhat[:, [i]] = predictor(MVval, krmodelPH)[0]
+    perf.append(krmodelPH.perf)
+    
+    Yhat[:, [i]], *_ = krmodelPH.predict(X=MVval)
 
 end = time.time()
 exectime = end - start

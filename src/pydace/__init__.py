@@ -1,18 +1,6 @@
-# from pydace.correlation import corr
-# from pydace.regression import regrpoly
-# from pydace.utils import lhsdesign
-# from pydace.utils.matrixdivide import mldivide, mrdivide
-# from pydace.utils.optimizers import BoxMin
-import os
-import pathlib
-
 import numpy as np
 from scipy.linalg import LinAlgError, cholesky, qr
 from scipy.spatial.distance import pdist
-
-paths = os.environ['PYTHONPATH'].split(os.pathsep)
-
-pathlib.Path(paths[0]).resolve()
 
 from .correlation import corr
 from .regression import regrpoly
@@ -303,8 +291,9 @@ class Dace:
                 f = bmin.f
                 theta = bmin.t
                 self._objfunc(theta)
-                perf = bmin.perf_info
+
                 self.theta = theta
+                self.perf = bmin.perf_info
 
             else:
                 raise NotImplementedError(
