@@ -4,7 +4,7 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 PACKAGE_NAME = 'pydace'
-VERSION = '0.1.2'
+VERSION = '0.1.3'
 
 setup(name=PACKAGE_NAME,
       version=VERSION,
@@ -13,7 +13,7 @@ setup(name=PACKAGE_NAME,
       author_email='felipe.lima@eq.ufcg.edu.br',
       url='https://github.com/feslima/pydace',
       license='Apache License 2.0',
-      packages=[PACKAGE_NAME],
+      packages=find_packages(where='src', exclude=['tests']),
       package_dir={'': 'src'},
       long_description=long_description,
       long_description_content_type="text/markdown",
