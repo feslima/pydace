@@ -1,12 +1,23 @@
+# from pydace.correlation import corr
+# from pydace.regression import regrpoly
+# from pydace.utils import lhsdesign
+# from pydace.utils.matrixdivide import mldivide, mrdivide
+# from pydace.utils.optimizers import BoxMin
+import os
+import pathlib
+
 import numpy as np
 from scipy.linalg import LinAlgError, cholesky, qr
 from scipy.spatial.distance import pdist
 
-from pydace.correlation import corr
-from pydace.regression import regrpoly
-from pydace.utils import lhsdesign
-from pydace.utils.matrixdivide import mldivide, mrdivide
-from pydace.utils.optimizers import BoxMin
+paths = os.environ['PYTHONPATH'].split(os.pathsep)
+
+pathlib.Path(paths[0]).resolve()
+
+from .correlation import corr
+from .regression import regrpoly
+from .utils.matrixdivide import mldivide, mrdivide
+from .utils.optimizers import BoxMin
 
 
 class Dace:
@@ -296,7 +307,8 @@ class Dace:
                 self.theta = theta
 
             else:
-                raise NotImplementedError("Invalid optimizer option or not implemented.")
+                raise NotImplementedError(
+                    "Invalid optimizer option or not implemented.")
         else:  # given theta
             if np.any(np.less_equal(theta0, np.zeros(theta0.shape))):
                 raise ValueError('theta0 must be strictly positive.')
